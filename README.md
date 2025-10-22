@@ -1,26 +1,23 @@
-# demos-tiletemp-2d — v2
+# demos-tiletemp-2d — v3
 
-**2D tile temperature (x–z) under an Eich heat-flux boundary**, with fixed grids and added physics:
-- Strike offset **fixed at 0**
-- **x-range** = [-50, 150] mm with **Nx=50**
-- **z-range** = [0, 20] mm with **Nz=40**
-- **Neutral pressure** broadens spread (λq & S)
-- **Impurity fraction** removes power to tile: P_eff = P_SOL · (1 − impurity)
+**2D tile temperature (x–z) under an Eich heat-flux boundary** with improved compare tools, colors, and physics.
 
-Also includes:
-- Auto-generation of dataset rows via **Latin Hypercube** or **Halton** sampling
-- **Compare prediction** tab for drag-and-drop predictions (and optional uncertainties), with RMSE/MAE & plots
+### v3 highlights
+- **CSV uploads**: headers in prediction/uncertainty files are ignored. Inputs CSV sets ground truth.
+- **Colormaps**: Temperature `'plasma'`; Error `'seismic'` symmetric about 0; Uncertainty `'Reds'` shown as **95% CI = 1.96×σ**.
+- **Compare**: Requires **both** prediction and uncertainty; 2×2 grid (GT, Pred, Error, Uncertainty). Metrics (RMSE/MAE/R²/**MSLL**) under an expander.
+- **Saved CSVs**: Only true control parameters are saved (no fixed metadata).
+- **Physics**: `neutral_fraction` + `ne_19` broaden the Eich footprint (illustrative).
 
-## Run
+### Controls
+`P_SOL_MW, flux_expansion, angle_deg, coolant_T_K, k_W_mK, thickness_mm, neutral_fraction, impurity_fraction, ne_19`
+
+### Run
 ```bash
 pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Dataset format
-- `inputs.csv` — one row per configuration (controls + fixed-grid metadata)
-- `outputs.csv` — flattened 2D field (`T_0 ... T_{Nx*Nz-1}`), row-major (x fastest)
-
-## Notes
-- Normalisation ensures toroidal integral of \(q(x)\) ≈ `P_SOL` (plus a small fixed background).
-- Conduction is 1D in-depth (teaching simplification). LHS is a good default; Halton provides low-discrepancy coverage.
+### Dataset format
+- `inputs.csv` — one row per configuration (only controls)
+- `outputs.csv` — flattened `T_0 ... T_{Nx*Nz-1}` (row-major, x-fastest)

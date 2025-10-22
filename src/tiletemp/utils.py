@@ -1,12 +1,18 @@
 # src/tiletemp/utils.py
 import numpy as np
 import pandas as pd
-from typing import Dict
+from typing import Dict, List
 
 NX_FIXED = 50
 NZ_FIXED = 40
 X_MIN_MM, X_MAX_MM = -50.0, 150.0
 Z_MIN_MM, Z_MAX_MM = 0.0, 20.0
+
+CONTROL_KEYS = [
+    "P_SOL_MW","flux_expansion","angle_deg",
+    "coolant_T_K","k_W_mK","thickness_mm",
+    "neutral_fraction","impurity_fraction","ne_19"
+]
 
 def fixed_grids():
     x = np.linspace(X_MIN_MM, X_MAX_MM, NX_FIXED)
@@ -14,19 +20,10 @@ def fixed_grids():
     return x, z
 
 def pack_controls(params: Dict) -> Dict:
-    keys = [
-        "P_SOL_MW","flux_expansion","angle_deg",
-        "coolant_T_K","k_W_mK","thickness_mm",
-        "neutral_pressure","impurity_fraction"
-    ]
     out = {}
-    for k in keys:
+    for k in CONTROL_KEYS:
         v = params.get(k)
         out[k] = float(v) if isinstance(v,(int,float,np.floating)) else v
-    out.update(dict(
-        x_min_mm=X_MIN_MM, x_max_mm=X_MAX_MM, nx=NX_FIXED,
-        z_min_mm=Z_MIN_MM, z_max_mm=Z_MAX_MM, nz=NZ_FIXED
-    ))
     return out
 
 def outputs_to_row_2d(T: np.ndarray, prefix="T") -> Dict:
@@ -57,3 +54,24 @@ def halton(n_samples: int, n_dims: int, rng: np.random.Generator) -> np.ndarray:
         for d, b in enumerate(bases):
             H[i, d] = vdc(i+1+offset, b)
     return H
+
+def parse_inputs_csv(file_bytes) -> Dict:
+    try:
+        df = pd.read_csv(file_bytes)
+        present = [k for k in CONTROL_KEYS if k in df.columns]
+        if len(present) >= 1:
+            row = df.iloc[0]
+            out = {}
+            for k in CONTROL_KEYS:
+                if k in df.columns:
+                    out[k] = float(row[k])
+            return out
+        file_bytes.seek(0)
+        arr = pd.read_csv(file_bytes, header=None).values.ravel()
+        return {k: float(v) for k, v in zip(CONTROL_KEYS, arr)}
+    except Exception:
+        file_bytes.seek(0)
+        arr = np.loadtxt(file_bytes, delimiter=",")
+        if arr.ndim > 1:
+            arr = arr.ravel()
+        return {k: float(v) for k, v in zip(CONTROL_KEYS, arr)}

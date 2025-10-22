@@ -1,23 +1,28 @@
-# app.py — 2D Tile Temperature (v2)
+# app.py — 2D Tile Temperature (v3)
 import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.colors import TwoSlopeNorm
 
 from src.tiletemp.physics import tile_temperature_field, eich_1d_profile
-from src.tiletemp.utils import fixed_grids, pack_controls, outputs_to_row_2d, lhs, halton, NX_FIXED, NZ_FIXED
+from src.tiletemp.utils import (
+    fixed_grids, pack_controls, outputs_to_row_2d,
+    lhs, halton, NX_FIXED, NZ_FIXED, CONTROL_KEYS, parse_inputs_csv
+)
 
-st.set_page_config(page_title="Divertor Tile Temperature — 2D (x–z) — v2", layout="wide")
-st.title("Divertor Tile Temperature — 2D (x–z) — v2")
-st.caption("Fixed strike offset; fixed grids (x: -50→150 mm, Nx=50; z: 0→20 mm, Nz=40). Adds neutral pressure (broadening) and impurity fraction (power removal).")
+st.set_page_config(page_title="Divertor Tile Temperature — 2D (x–z) — v3", layout="wide")
+st.title("Divertor Tile Temperature — 2D (x–z) — v3")
+st.caption("Plasma-facing heat flux via Eich; through-thickness conduction. Fixed grids; improved compare & metrics; LHS/Halton sampling.")
 
 with st.sidebar:
     st.header("Control parameters")
     P_SOL_MW = st.slider("P_SOL to outer target [MW]", 0.5, 30.0, 5.0, 0.5)
     flux_expansion = st.slider("Flux expansion [-]", 1.0, 15.0, 5.0, 0.5)
     angle_deg = st.slider("Incidence angle [deg]", 0.5, 5.0, 2.0, 0.1)
-    neutral_pressure = st.slider("Neutral pressure [arb.]", 0.0, 5.0, 0.0, 0.1)
+    neutral_fraction = st.slider("Neutral fraction [-]", 0.0, 1.0, 0.0, 0.01)
     impurity_fraction = st.slider("Impurity fraction (power removed) [-]", 0.0, 0.5, 0.0, 0.01)
+    ne_19 = st.slider("Upstream density nₑ [10¹⁹ m⁻³]", 1.0, 15.0, 5.0, 0.5)
 
     st.header("Tile & cooling")
     coolant_T_K = st.slider("Coolant temperature T_c [K]", 273.0, 700.0, 350.0, 1.0)
@@ -30,7 +35,7 @@ with st.sidebar:
     if use_auto:
         n_points = st.number_input("Number of samples (N)", 1, 2000, 100, 1)
         sampler = st.selectbox("Sampler", ["Latin Hypercube (LHS)", "Halton (low-discrepancy)"])
-        st.caption("LHS is robust for moderate dimensions; Halton offers low-discrepancy coverage (Sobol-like).")
+        st.caption("LHS is robust for moderate dimensions; Halton is a good low-discrepancy stand-in for Sobol.")
         gen_btn = st.button("Generate & Append")
 
 x, z = fixed_grids()
@@ -46,18 +51,19 @@ with tab1:
         coolant_T_K=coolant_T_K,
         k_W_mK=k_W_mK,
         thickness_mm=thickness_mm,
-        neutral_pressure=neutral_pressure,
+        neutral_fraction=neutral_fraction,
         impurity_fraction=impurity_fraction,
+        ne_19=ne_19,
     )
     q_MW_m2 = eich_1d_profile(
         x, P_SOL_MW*(1.0-impurity_fraction), flux_expansion, angle_deg,
-        neutral_pressure=neutral_pressure
+        neutral_fraction=neutral_fraction, ne_19=ne_19
     )
 
     col1, col2 = st.columns([3,1], gap="large")
     with col1:
         fig, ax = plt.subplots(figsize=(7.5,5.5))
-        im = ax.imshow(T.T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()], aspect='auto')
+        im = ax.imshow(T.T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()], aspect='auto', cmap='plasma')
         cbar = plt.colorbar(im, ax=ax)
         cbar.set_label("Temperature T(x,z) [K]")
         ax.set_xlabel("x (strike) [mm]")
@@ -83,7 +89,7 @@ with tab1:
     params = dict(
         P_SOL_MW=P_SOL_MW, flux_expansion=flux_expansion, angle_deg=angle_deg,
         coolant_T_K=coolant_T_K, k_W_mK=k_W_mK, thickness_mm=thickness_mm,
-        neutral_pressure=neutral_pressure, impurity_fraction=impurity_fraction,
+        neutral_fraction=neutral_fraction, impurity_fraction=impurity_fraction, ne_19=ne_19,
     )
 
     c1, c2, c3 = st.columns([1,1,2])
@@ -101,16 +107,11 @@ with tab1:
 
     if 'rng' not in st.session_state:
         st.session_state.rng = np.random.default_rng(123)
-
     if use_auto and gen_btn:
         rng = st.session_state.rng
         n = int(n_points)
-        dims = 8
-        if sampler.startswith("Latin"):
-            U = lhs(n, dims, rng)
-        else:
-            U = halton(n, dims, rng)
-
+        dims = len(CONTROL_KEYS)
+        U = lhs(n, dims, rng) if sampler.startswith("Latin") else halton(n, dims, rng)
         bounds = dict(
             P_SOL_MW=(0.5, 30.0),
             flux_expansion=(1.0, 15.0),
@@ -118,8 +119,9 @@ with tab1:
             coolant_T_K=(273.0, 700.0),
             k_W_mK=(30.0, 250.0),
             thickness_mm=(2.0, 60.0),
-            neutral_pressure=(0.0, 5.0),
+            neutral_fraction=(0.0, 1.0),
             impurity_fraction=(0.0, 0.5),
+            ne_19=(1.0, 15.0),
         )
         keys = list(bounds.keys())
         lo = np.array([bounds[k][0] for k in keys])
@@ -163,77 +165,135 @@ with tab1:
 
 with tab2:
     st.subheader("Compare model prediction vs. ground truth")
-    st.caption("Upload your model's predicted T(x,z) as a CSV (single row or flattened vector; length must be Nx×Nz). Optional: upload per-pixel uncertainty (same shape).")
+    st.caption("Upload inputs (CSV with headers), prediction CSV (flattened Nx×Nz), and uncertainty CSV (same length). Headers in prediction/uncertainty files are ignored.")
+
+    inputs_file = st.file_uploader("Inputs CSV (with headers)", type=["csv"], key="inputs_csv")
+    if inputs_file is not None:
+        try:
+            vals = parse_inputs_csv(inputs_file)
+            # Fill missing with current sidebar defaults
+            for k in CONTROL_KEYS:
+                if k not in vals or vals[k] is None or np.isnan(vals[k]):
+                    vals[k] = locals().get(k, None)
+            P_SOL_MW_c = float(vals["P_SOL_MW"])
+            flux_expansion_c = float(vals["flux_expansion"])
+            angle_deg_c = float(vals["angle_deg"])
+            coolant_T_K_c = float(vals["coolant_T_K"])
+            k_W_mK_c = float(vals["k_W_mK"])
+            thickness_mm_c = float(vals["thickness_mm"])
+            neutral_fraction_c = float(vals["neutral_fraction"])
+            impurity_fraction_c = float(vals["impurity_fraction"])
+            ne_19_c = float(vals["ne_19"])
+        except Exception as e:
+            st.error(f"Could not parse inputs CSV: {e}")
+            inputs_file = None
+
+    if inputs_file is None:
+        P_SOL_MW_c = P_SOL_MW
+        flux_expansion_c = flux_expansion
+        angle_deg_c = angle_deg
+        coolant_T_K_c = coolant_T_K
+        k_W_mK_c = k_W_mK
+        thickness_mm_c = thickness_mm
+        neutral_fraction_c = neutral_fraction
+        impurity_fraction_c = impurity_fraction
+        ne_19_c = ne_19
 
     T_true = tile_temperature_field(
         x, z,
-        P_SOL_MW=P_SOL_MW,
-        flux_expansion=flux_expansion,
-        angle_deg=angle_deg,
-        coolant_T_K=coolant_T_K,
-        k_W_mK=k_W_mK,
-        thickness_mm=thickness_mm,
-        neutral_pressure=neutral_pressure,
-        impurity_fraction=impurity_fraction,
+        P_SOL_MW=P_SOL_MW_c,
+        flux_expansion=flux_expansion_c,
+        angle_deg=angle_deg_c,
+        coolant_T_K=coolant_T_K_c,
+        k_W_mK=k_W_mK_c,
+        thickness_mm=thickness_mm_c,
+        neutral_fraction=neutral_fraction_c,
+        impurity_fraction=impurity_fraction_c,
+        ne_19=ne_19_c,
     )
 
     nx, nz = len(x), len(z)
     n_expected = nx * nz
 
-    pred_file = st.file_uploader(f"Prediction CSV (flattened length {n_expected})", type=["csv"])
-    unc_file = st.file_uploader("Optional Uncertainty CSV (same length)", type=["csv"])
+    pred_file = st.file_uploader(f"Prediction CSV (flattened length {n_expected})", type=["csv"], key="pred_csv")
+    unc_file = st.file_uploader("Uncertainty CSV (same length; 1σ)", type=["csv"], key="unc_csv")
 
-    if pred_file is not None:
+    if pred_file is not None and unc_file is not None:
         try:
-            arr = np.loadtxt(pred_file, delimiter=",")
-            if arr.ndim > 1:
-                arr = arr.ravel()
-            if arr.size != n_expected:
-                st.error(f"Prediction has {arr.size} values; expected {n_expected} (Nx×Nz = {nx}×{nz}).")
+            def read_flat(file):
+                try:
+                    df = pd.read_csv(file, header=None)
+                    arr = df.values.ravel()
+                except Exception:
+                    file.seek(0)
+                    arr = np.loadtxt(file, delimiter=",")
+                    if arr.ndim > 1:
+                        arr = arr.ravel()
+                return arr
+
+            pred_arr = read_flat(pred_file)
+            unc_arr = read_flat(unc_file)
+
+            if pred_arr.size != n_expected or unc_arr.size != n_expected:
+                st.error(f"Lengths mismatch. Pred={pred_arr.size}, Unc={unc_arr.size}, expected {n_expected}.")
             else:
-                T_pred = arr.reshape((nx, nz), order="C")
+                T_pred = pred_arr.reshape((nx, nz), order="C")
+                sigma = unc_arr.reshape((nx, nz), order="C")  # 1σ
+
+                # Metrics
                 err = T_pred - T_true
                 rmse = float(np.sqrt(np.mean(err**2)))
                 mae = float(np.mean(np.abs(err)))
-                c1, c2, c3 = st.columns(3, gap="small")
-                with c1:
-                    st.metric("RMSE [K]", f"{rmse:.3f}")
-                    st.metric("MAE  [K]", f"{mae:.3f}")
-                with c2:
-                    fig, ax = plt.subplots(figsize=(4.6,3.6))
-                    im = ax.imshow(T_true.T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()], aspect='auto')
+                ss_res = float(np.sum(err**2))
+                ss_tot = float(np.sum((T_true - np.mean(T_true))**2))
+                r2 = 1.0 - ss_res/ss_tot if ss_tot > 0 else float('nan')
+                var = np.clip(sigma**2, 1e-12, None)
+                msll = float(np.mean(0.5*np.log(2*np.pi*var) + 0.5*((T_true - T_pred)**2)/var))
+
+                # Colormap limits
+                tmin = float(min(T_true.min(), T_pred.min()))
+                tmax = float(max(T_true.max(), T_pred.max()))
+                emax = float(np.max(np.abs(err)))
+                ci95 = 1.96 * sigma
+                u95_max = float(np.percentile(ci95, 95))
+
+                # 2×2 grid
+                cA, cB = st.columns(2, gap="large")
+                with cA:
+                    fig, ax = plt.subplots(figsize=(6,4.8))
+                    im = ax.imshow(T_true.T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()],
+                                   aspect='auto', cmap='plasma', vmin=tmin, vmax=tmax)
                     plt.colorbar(im, ax=ax).set_label("T_true [K]")
                     ax.set_title("Ground truth")
                     st.pyplot(fig)
-                with c3:
-                    fig, ax = plt.subplots(figsize=(4.6,3.6))
-                    im = ax.imshow(T_pred.T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()], aspect='auto')
+                with cB:
+                    fig, ax = plt.subplots(figsize=(6,4.8))
+                    im = ax.imshow(T_pred.T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()],
+                                   aspect='auto', cmap='plasma', vmin=tmin, vmax=tmax)
                     plt.colorbar(im, ax=ax).set_label("T_pred [K]")
                     ax.set_title("Prediction")
                     st.pyplot(fig)
 
-                fig, ax = plt.subplots(figsize=(6.6,3.6))
-                im = ax.imshow((T_pred - T_true).T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()], aspect='auto')
-                plt.colorbar(im, ax=ax).set_label("Error [K]")
-                ax.set_title("Error (Pred − True)")
-                st.pyplot(fig)
+                cC, cD = st.columns(2, gap="large")
+                with cC:
+                    fig, ax = plt.subplots(figsize=(6,4.8))
+                    norm = TwoSlopeNorm(vmin=-emax, vcenter=0.0, vmax=emax)
+                    im = ax.imshow((T_pred - T_true).T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()],
+                                   aspect='auto', cmap='seismic', norm=norm)
+                    plt.colorbar(im, ax=ax).set_label("Error [K] (Pred − True)")
+                    ax.set_title("Error (symmetric)")
+                    st.pyplot(fig)
+                with cD:
+                    fig, ax = plt.subplots(figsize=(6,4.8))
+                    im = ax.imshow((1.96 * sigma).T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()],
+                                   aspect='auto', cmap='Reds', vmin=0.0, vmax=u95_max)
+                    plt.colorbar(im, ax=ax).set_label("Uncertainty (95% CI) [K]")
+                    ax.set_title("Uncertainty (95% CI)")
+                    st.pyplot(fig)
 
-                if unc_file is not None:
-                    uarr = np.loadtxt(unc_file, delimiter=",")
-                    if uarr.ndim > 1:
-                        uarr = uarr.ravel()
-                    if uarr.size == n_expected:
-                        U = uarr.reshape((nx, nz), order="C")
-                        with st.expander("Uncertainty diagnostics"):
-                            zmap = (T_pred - T_true) / np.where(U>0, U, np.nan)
-                            coverage = np.nanmean(np.abs(zmap) <= 1.0) * 100.0
-                            st.write(f"±1σ coverage: **{coverage:.1f}%** (ideal ≈ 68%)")
-                            fig, ax = plt.subplots(figsize=(6,3.6))
-                            im = ax.imshow(U.T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()], aspect='auto')
-                            plt.colorbar(im, ax=ax).set_label("Uncertainty σ [K]")
-                            ax.set_title("Provided Uncertainty (σ)")
-                            st.pyplot(fig)
-                    else:
-                        st.warning(f"Uncertainty has {uarr.size} values; expected {n_expected}. Ignoring.")
+                with st.expander("Validation metrics"):
+                    st.write(f"**RMSE [K]:** {rmse:.3f}   |   **MAE [K]:** {mae:.3f}   |   **R²:** {r2:.3f}   |   **MSLL:** {msll:.3f}")
         except Exception as e:
-            st.error(f"Could not parse prediction: {e}")
+            st.error(f"Could not parse uploaded files: {e}")
+    else:
+        st.info("Please upload both a Prediction CSV and an Uncertainty CSV to enable comparison.")

@@ -30,16 +30,22 @@ def eich_1d_profile(
     S_mm_base: float = 1.0,
     q_bg_MW_m2: float = 0.02,
     toroidal_radius_m: float = 1.0,
-    neutral_pressure: float = 0.0,
-    neutral_alpha: float = 0.12,
+    neutral_fraction: float = 0.0,
+    neutral_alpha: float = 0.20,
+    ne_19: float = 5.0,
+    ne_ref: float = 5.0,
+    ne_alpha: float = 0.08,
 ) -> np.ndarray:
     x = np.asarray(x_mm)
     angle_rad = np.deg2rad(max(angle_deg, 0.5))
-    neutral_factor = 1.0 + neutral_alpha * max(neutral_pressure, 0.0)
-    lam = max(lambda_q_mm_base * (flux_expansion/5.0) * (0.5/angle_rad) * neutral_factor, 0.2)
-    S = max(S_mm_base * (flux_expansion/5.0) * (0.5/angle_rad) * neutral_factor, 0.1)
+    f_angle = (0.5 / angle_rad)
+    f_flux  = (flux_expansion / 5.0)
+    f_neut  = (1.0 + neutral_alpha * max(neutral_fraction, 0.0))
+    f_ne    = (1.0 + ne_alpha * (max(ne_19, 0.0) - ne_ref))
+    lam = max(lambda_q_mm_base * f_angle * f_flux * f_neut * f_ne, 0.2)
+    S   = max(S_mm_base         * f_angle * f_flux * f_neut * np.sqrt(f_ne), 0.1)
 
-    xi = x  # x0=0
+    xi = x
     A = (S / (2.0 * lam)) ** 2 - (xi / lam)
     B = (S / (2.0 * lam)) - (xi / S)
     shape = 0.5 * np.exp(A) * erfc(B)
@@ -65,8 +71,9 @@ def tile_temperature_field(
     S_mm_base: float = 1.0,
     q_bg_MW_m2: float = 0.02,
     toroidal_radius_m: float = 1.0,
-    neutral_pressure: float = 0.0,
+    neutral_fraction: float = 0.0,
     impurity_fraction: float = 0.0,
+    ne_19: float = 5.0,
 ) -> np.ndarray:
     P_eff = P_SOL_MW * (1.0 - max(min(impurity_fraction, 0.95), 0.0))
     qx_MW_m2 = eich_1d_profile(
@@ -78,7 +85,8 @@ def tile_temperature_field(
         S_mm_base=S_mm_base,
         q_bg_MW_m2=q_bg_MW_m2,
         toroidal_radius_m=toroidal_radius_m,
-        neutral_pressure=neutral_pressure,
+        neutral_fraction=neutral_fraction,
+        ne_19=ne_19,
     )
     qx_W_m2 = qx_MW_m2 * 1e6
     z_m = np.asarray(z_mm) * 1e-3
