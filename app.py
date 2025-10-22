@@ -1,4 +1,4 @@
-# app.py — 2D Tile Temperature (v3)
+# app.py — 2D Tile Temperature (v4)
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -8,13 +8,15 @@ from matplotlib.colors import TwoSlopeNorm
 from src.tiletemp.physics import tile_temperature_field, eich_1d_profile
 from src.tiletemp.utils import (
     fixed_grids, pack_controls, outputs_to_row_2d,
-    lhs, halton, NX_FIXED, NZ_FIXED, CONTROL_KEYS, parse_inputs_csv
+    lhs, NX_FIXED, NZ_FIXED, CONTROL_KEYS,
+    parse_inputs_csv_with_header, read_flat_with_header
 )
 
-st.set_page_config(page_title="Divertor Tile Temperature — 2D (x–z) — v3", layout="wide")
-st.title("Divertor Tile Temperature — 2D (x–z) — v3")
-st.caption("Plasma-facing heat flux via Eich; through-thickness conduction. Fixed grids; improved compare & metrics; LHS/Halton sampling.")
+st.set_page_config(page_title="Divertor Tile Temperature — 2D (x–z) — v4", layout="wide")
+st.title("Divertor Tile Temperature — 2D (x–z) — v4")
+st.caption("Fixed smaller grids; LHS auto-sampler; headered CSVs; filename fields for downloads.")
 
+# ---- Sidebar controls ----
 with st.sidebar:
     st.header("Control parameters")
     P_SOL_MW = st.slider("P_SOL to outer target [MW]", 0.5, 30.0, 5.0, 0.5)
@@ -30,19 +32,19 @@ with st.sidebar:
     thickness_mm = st.slider("Tile thickness [mm]", 2.0, 60.0, 20.0, 0.5)
 
     st.divider()
-    st.header("Auto-generate dataset")
-    use_auto = st.toggle("Auto-generate via sampler")
-    if use_auto:
-        n_points = st.number_input("Number of samples (N)", 1, 2000, 100, 1)
-        sampler = st.selectbox("Sampler", ["Latin Hypercube (LHS)", "Halton (low-discrepancy)"])
-        st.caption("LHS is robust for moderate dimensions; Halton is a good low-discrepancy stand-in for Sobol.")
-        gen_btn = st.button("Generate & Append")
+    st.header("Auto-generate dataset (LHS only)")
+    use_auto = st.toggle("Enable LHS auto-generation")
+    n_points = st.number_input("Number of LHS samples", 1, 2000, 20, 1)
+    gen_btn = st.button("Generate & Append")
 
+# Fixed smaller grids
 x, z = fixed_grids()
 
+# Tabs
 tab1, tab2 = st.tabs(["Explore & Build", "Compare prediction"])
 
 with tab1:
+    # Ground truth from sidebar controls
     T = tile_temperature_field(
         x, z,
         P_SOL_MW=P_SOL_MW,
@@ -81,6 +83,7 @@ with tab1:
         st.pyplot(fig2)
         st.caption(f"Fixed grid: Nx={NX_FIXED}, Nz={NZ_FIXED}. x=[{x.min():.0f},{x.max():.0f}] mm; z=[{z.min():.0f},{z.max():.0f}] mm.")
 
+    # Dataset state
     if "inputs_df" not in st.session_state:
         st.session_state.inputs_df = pd.DataFrame()
     if "outputs_df" not in st.session_state:
@@ -105,13 +108,15 @@ with tab1:
             st.session_state.inputs_df = pd.DataFrame()
             st.session_state.outputs_df = pd.DataFrame()
 
+    # Auto-generate via LHS only
     if 'rng' not in st.session_state:
         st.session_state.rng = np.random.default_rng(123)
     if use_auto and gen_btn:
         rng = st.session_state.rng
         n = int(n_points)
         dims = len(CONTROL_KEYS)
-        U = lhs(n, dims, rng) if sampler.startswith("Latin") else halton(n, dims, rng)
+        U = lhs(n, dims, rng)
+
         bounds = dict(
             P_SOL_MW=(0.5, 30.0),
             flux_expansion=(1.0, 15.0),
@@ -138,42 +143,41 @@ with tab1:
 
         st.session_state.inputs_df = pd.concat([st.session_state.inputs_df, pd.DataFrame(add_inputs)], ignore_index=True)
         st.session_state.outputs_df = pd.concat([st.session_state.outputs_df, pd.DataFrame(add_outputs)], ignore_index=True)
-        st.success(f"Appended {n} samples via {sampler}.")
+        st.success(f"Appended {n} samples via Latin Hypercube.")
 
-    with st.expander("Current dataset (inputs)"):
-        st.dataframe(st.session_state.inputs_df, use_container_width=True, height=240)
-    with st.expander("Current dataset (outputs: flattened T_ij)"):
-        st.dataframe(st.session_state.outputs_df, use_container_width=True, height=240)
-
+    # Download filename fields
     col_dl1, col_dl2 = st.columns(2)
     with col_dl1:
+        fname_inputs = st.text_input("Inputs filename", "inputs.csv")
         st.download_button(
             "⬇️ Download inputs.csv",
-            data=st.session_state.inputs_df.to_csv(index=False).encode("utf-8"),
-            file_name="inputs.csv",
+            data=st.session_state.inputs_df.to_csv(index=True).encode("utf-8"),
+            file_name=fname_inputs,
             mime="text/csv",
             disabled=st.session_state.inputs_df.empty,
         )
     with col_dl2:
+        fname_outputs = st.text_input("Outputs filename", "outputs.csv")
         st.download_button(
             "⬇️ Download outputs.csv",
-            data=st.session_state.outputs_df.to_csv(index=False).encode("utf-8"),
-            file_name="outputs.csv",
+            data=st.session_state.outputs_df.to_csv(index=True).encode("utf-8"),
+            file_name=fname_outputs,
             mime="text/csv",
             disabled=st.session_state.outputs_df.empty,
         )
 
 with tab2:
     st.subheader("Compare model prediction vs. ground truth")
-    st.caption("Upload inputs (CSV with headers), prediction CSV (flattened Nx×Nz), and uncertainty CSV (same length). Headers in prediction/uncertainty files are ignored.")
+    st.caption("All CSVs must have a header row. Upload inputs CSV (headers match controls), prediction CSV (flattened), and uncertainty CSV (flattened 1σ).")
 
-    inputs_file = st.file_uploader("Inputs CSV (with headers)", type=["csv"], key="inputs_csv")
+    # Inputs CSV (with headers) to set ground truth
+    inputs_file = st.file_uploader("Inputs CSV (with headers)", type=["csv"], key="inputs_csv_v4")
     if inputs_file is not None:
         try:
-            vals = parse_inputs_csv(inputs_file)
-            # Fill missing with current sidebar defaults
+            vals = parse_inputs_csv_with_header(inputs_file)
+            # Fill missing keys from sidebar defaults
             for k in CONTROL_KEYS:
-                if k not in vals or vals[k] is None or np.isnan(vals[k]):
+                if k not in vals:
                     vals[k] = locals().get(k, None)
             P_SOL_MW_c = float(vals["P_SOL_MW"])
             flux_expansion_c = float(vals["flux_expansion"])
@@ -199,6 +203,7 @@ with tab2:
         impurity_fraction_c = impurity_fraction
         ne_19_c = ne_19
 
+    # Compute ground truth
     T_true = tile_temperature_field(
         x, z,
         P_SOL_MW=P_SOL_MW_c,
@@ -215,24 +220,13 @@ with tab2:
     nx, nz = len(x), len(z)
     n_expected = nx * nz
 
-    pred_file = st.file_uploader(f"Prediction CSV (flattened length {n_expected})", type=["csv"], key="pred_csv")
-    unc_file = st.file_uploader("Uncertainty CSV (same length; 1σ)", type=["csv"], key="unc_csv")
+    pred_file = st.file_uploader(f"Prediction CSV (flattened, length {n_expected})", type=["csv"], key="pred_csv_v4")
+    unc_file = st.file_uploader("Uncertainty CSV (flattened 1σ, same length)", type=["csv"], key="unc_csv_v4")
 
     if pred_file is not None and unc_file is not None:
         try:
-            def read_flat(file):
-                try:
-                    df = pd.read_csv(file, header=None)
-                    arr = df.values.ravel()
-                except Exception:
-                    file.seek(0)
-                    arr = np.loadtxt(file, delimiter=",")
-                    if arr.ndim > 1:
-                        arr = arr.ravel()
-                return arr
-
-            pred_arr = read_flat(pred_file)
-            unc_arr = read_flat(unc_file)
+            pred_arr = read_flat_with_header(pred_file)
+            unc_arr = read_flat_with_header(unc_file)
 
             if pred_arr.size != n_expected or unc_arr.size != n_expected:
                 st.error(f"Lengths mismatch. Pred={pred_arr.size}, Unc={unc_arr.size}, expected {n_expected}.")
@@ -250,24 +244,24 @@ with tab2:
                 var = np.clip(sigma**2, 1e-12, None)
                 msll = float(np.mean(0.5*np.log(2*np.pi*var) + 0.5*((T_true - T_pred)**2)/var))
 
-                # Colormap limits
+                # Limits
                 tmin = float(min(T_true.min(), T_pred.min()))
                 tmax = float(max(T_true.max(), T_pred.max()))
                 emax = float(np.max(np.abs(err)))
                 ci95 = 1.96 * sigma
                 u95_max = float(np.percentile(ci95, 95))
 
-                # 2×2 grid
+                # 2x2 grid
                 cA, cB = st.columns(2, gap="large")
                 with cA:
-                    fig, ax = plt.subplots(figsize=(6,4.8))
+                    fig, ax = plt.subplots(figsize=(6,4.2))
                     im = ax.imshow(T_true.T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()],
                                    aspect='auto', cmap='plasma', vmin=tmin, vmax=tmax)
                     plt.colorbar(im, ax=ax).set_label("T_true [K]")
                     ax.set_title("Ground truth")
                     st.pyplot(fig)
                 with cB:
-                    fig, ax = plt.subplots(figsize=(6,4.8))
+                    fig, ax = plt.subplots(figsize=(6,4.2))
                     im = ax.imshow(T_pred.T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()],
                                    aspect='auto', cmap='plasma', vmin=tmin, vmax=tmax)
                     plt.colorbar(im, ax=ax).set_label("T_pred [K]")
@@ -276,7 +270,7 @@ with tab2:
 
                 cC, cD = st.columns(2, gap="large")
                 with cC:
-                    fig, ax = plt.subplots(figsize=(6,4.8))
+                    fig, ax = plt.subplots(figsize=(6,4.2))
                     norm = TwoSlopeNorm(vmin=-emax, vcenter=0.0, vmax=emax)
                     im = ax.imshow((T_pred - T_true).T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()],
                                    aspect='auto', cmap='seismic', norm=norm)
@@ -284,8 +278,8 @@ with tab2:
                     ax.set_title("Error (symmetric)")
                     st.pyplot(fig)
                 with cD:
-                    fig, ax = plt.subplots(figsize=(6,4.8))
-                    im = ax.imshow((1.96 * sigma).T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()],
+                    fig, ax = plt.subplots(figsize=(6,4.2))
+                    im = ax.imshow(ci95.T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()],
                                    aspect='auto', cmap='Reds', vmin=0.0, vmax=u95_max)
                     plt.colorbar(im, ax=ax).set_label("Uncertainty (95% CI) [K]")
                     ax.set_title("Uncertainty (95% CI)")
@@ -296,4 +290,4 @@ with tab2:
         except Exception as e:
             st.error(f"Could not parse uploaded files: {e}")
     else:
-        st.info("Please upload both a Prediction CSV and an Uncertainty CSV to enable comparison.")
+        st.info("Please upload both a Prediction CSV and an Uncertainty CSV (with headers) to enable comparison.")
