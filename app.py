@@ -1,4 +1,4 @@
-# app.py — 2D Tile Temperature (v4)
+# app.py — 2D Tile Temperature (v6)
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -12,9 +12,9 @@ from src.tiletemp.utils import (
     parse_inputs_csv_with_header, read_flat_with_header
 )
 
-st.set_page_config(page_title="Divertor Tile Temperature — 2D (x–z) — v4", layout="wide")
-st.title("Divertor Tile Temperature — 2D (x–z) — v4")
-st.caption("Fixed smaller grids; LHS auto-sampler; headered CSVs; filename fields for downloads.")
+st.set_page_config(page_title="Divertor Tile Temperature — 2D (x–z) — v6", layout="wide")
+st.title("Divertor Tile Temperature — 2D (x–z) — v6")
+st.caption("No index in CSV downloads. LHS auto-generation only (no toggle).")
 
 # ---- Sidebar controls ----
 with st.sidebar:
@@ -33,18 +33,17 @@ with st.sidebar:
 
     st.divider()
     st.header("Auto-generate dataset (LHS only)")
-    use_auto = st.toggle("Enable LHS auto-generation")
-    n_points = st.number_input("Number of LHS samples", 1, 2000, 20, 1)
+    n_points = st.number_input("Number of LHS samples", 1, 100, 20, 1)
     gen_btn = st.button("Generate & Append")
 
-# Fixed smaller grids
+# Fixed grids
 x, z = fixed_grids()
 
 # Tabs
 tab1, tab2 = st.tabs(["Explore & Build", "Compare prediction"])
 
 with tab1:
-    # Ground truth from sidebar controls
+    # Compute ground truth with sidebar controls
     T = tile_temperature_field(
         x, z,
         P_SOL_MW=P_SOL_MW,
@@ -108,10 +107,10 @@ with tab1:
             st.session_state.inputs_df = pd.DataFrame()
             st.session_state.outputs_df = pd.DataFrame()
 
-    # Auto-generate via LHS only
+    # LHS auto-generation (always available, no toggle)
     if 'rng' not in st.session_state:
         st.session_state.rng = np.random.default_rng(123)
-    if use_auto and gen_btn:
+    if gen_btn:
         rng = st.session_state.rng
         n = int(n_points)
         dims = len(CONTROL_KEYS)
@@ -119,14 +118,20 @@ with tab1:
 
         bounds = dict(
             P_SOL_MW=(0.5, 30.0),
+            neutral_fraction=(0.0, 1.0),
+            impurity_fraction=(0.0, 0.5),
             flux_expansion=(1.0, 15.0),
             angle_deg=(0.5, 5.0),
             coolant_T_K=(273.0, 700.0),
             k_W_mK=(30.0, 250.0),
             thickness_mm=(2.0, 60.0),
-            neutral_fraction=(0.0, 1.0),
-            impurity_fraction=(0.0, 0.5),
             ne_19=(1.0, 15.0),
+            # flux_expansion=(5.0, 5.0),
+            # angle_deg=(2., 2.0),
+            # coolant_T_K=(350.0, 350.0),
+            # k_W_mK=(120.0, 120.0),
+            # thickness_mm=(20.0, 20.0),
+            # ne_19=(1.0, 15.0),
         )
         keys = list(bounds.keys())
         lo = np.array([bounds[k][0] for k in keys])
@@ -145,13 +150,13 @@ with tab1:
         st.session_state.outputs_df = pd.concat([st.session_state.outputs_df, pd.DataFrame(add_outputs)], ignore_index=True)
         st.success(f"Appended {n} samples via Latin Hypercube.")
 
-    # Download filename fields
+    # Download filename fields (no index in CSV)
     col_dl1, col_dl2 = st.columns(2)
     with col_dl1:
         fname_inputs = st.text_input("Inputs filename", "inputs.csv")
         st.download_button(
             "⬇️ Download inputs.csv",
-            data=st.session_state.inputs_df.to_csv(index=True).encode("utf-8"),
+            data=st.session_state.inputs_df.to_csv(index=False).encode("utf-8"),
             file_name=fname_inputs,
             mime="text/csv",
             disabled=st.session_state.inputs_df.empty,
@@ -160,7 +165,7 @@ with tab1:
         fname_outputs = st.text_input("Outputs filename", "outputs.csv")
         st.download_button(
             "⬇️ Download outputs.csv",
-            data=st.session_state.outputs_df.to_csv(index=True).encode("utf-8"),
+            data=st.session_state.outputs_df.to_csv(index=False).encode("utf-8"),
             file_name=fname_outputs,
             mime="text/csv",
             disabled=st.session_state.outputs_df.empty,
@@ -170,12 +175,11 @@ with tab2:
     st.subheader("Compare model prediction vs. ground truth")
     st.caption("All CSVs must have a header row. Upload inputs CSV (headers match controls), prediction CSV (flattened), and uncertainty CSV (flattened 1σ).")
 
-    # Inputs CSV (with headers) to set ground truth
-    inputs_file = st.file_uploader("Inputs CSV (with headers)", type=["csv"], key="inputs_csv_v4")
+    # Inputs CSV
+    inputs_file = st.file_uploader("Inputs CSV (with headers)", type=["csv"], key="inputs_csv_v6")
     if inputs_file is not None:
         try:
             vals = parse_inputs_csv_with_header(inputs_file)
-            # Fill missing keys from sidebar defaults
             for k in CONTROL_KEYS:
                 if k not in vals:
                     vals[k] = locals().get(k, None)
@@ -203,7 +207,7 @@ with tab2:
         impurity_fraction_c = impurity_fraction
         ne_19_c = ne_19
 
-    # Compute ground truth
+    # Ground truth
     T_true = tile_temperature_field(
         x, z,
         P_SOL_MW=P_SOL_MW_c,
@@ -220,8 +224,8 @@ with tab2:
     nx, nz = len(x), len(z)
     n_expected = nx * nz
 
-    pred_file = st.file_uploader(f"Prediction CSV (flattened, length {n_expected})", type=["csv"], key="pred_csv_v4")
-    unc_file = st.file_uploader("Uncertainty CSV (flattened 1σ, same length)", type=["csv"], key="unc_csv_v4")
+    pred_file = st.file_uploader(f"Prediction CSV (flattened, length {n_expected})", type=["csv"], key="pred_csv_v6")
+    unc_file = st.file_uploader("Uncertainty CSV (flattened 1σ, same length)", type=["csv"], key="unc_csv_v6")
 
     if pred_file is not None and unc_file is not None:
         try:
@@ -232,7 +236,7 @@ with tab2:
                 st.error(f"Lengths mismatch. Pred={pred_arr.size}, Unc={unc_arr.size}, expected {n_expected}.")
             else:
                 T_pred = pred_arr.reshape((nx, nz), order="C")
-                sigma = unc_arr.reshape((nx, nz), order="C")  # 1σ
+                sigma = unc_arr.reshape((nx, nz), order="C")
 
                 # Metrics
                 err = T_pred - T_true
@@ -244,20 +248,23 @@ with tab2:
                 var = np.clip(sigma**2, 1e-12, None)
                 msll = float(np.mean(0.5*np.log(2*np.pi*var) + 0.5*((T_true - T_pred)**2)/var))
 
-                # Limits
+                # Limits & shared scaling
                 tmin = float(min(T_true.min(), T_pred.min()))
                 tmax = float(max(T_true.max(), T_pred.max()))
                 emax = float(np.max(np.abs(err)))
                 ci95 = 1.96 * sigma
-                u95_max = float(np.percentile(ci95, 95))
+                u95_max = float(np.max(ci95))
+                vmax_shared = max(emax, u95_max) if np.isfinite(max(emax, u95_max)) else emax
 
-                # 2x2 grid
+                # 2×2 grid with axis labels
                 cA, cB = st.columns(2, gap="large")
                 with cA:
                     fig, ax = plt.subplots(figsize=(6,4.2))
                     im = ax.imshow(T_true.T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()],
                                    aspect='auto', cmap='plasma', vmin=tmin, vmax=tmax)
                     plt.colorbar(im, ax=ax).set_label("T_true [K]")
+                    ax.set_xlabel("x (strike) [mm]")
+                    ax.set_ylabel("z (depth) [mm]")
                     ax.set_title("Ground truth")
                     st.pyplot(fig)
                 with cB:
@@ -265,24 +272,30 @@ with tab2:
                     im = ax.imshow(T_pred.T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()],
                                    aspect='auto', cmap='plasma', vmin=tmin, vmax=tmax)
                     plt.colorbar(im, ax=ax).set_label("T_pred [K]")
+                    ax.set_xlabel("x (strike) [mm]")
+                    ax.set_ylabel("z (depth) [mm]")
                     ax.set_title("Prediction")
                     st.pyplot(fig)
 
                 cC, cD = st.columns(2, gap="large")
                 with cC:
                     fig, ax = plt.subplots(figsize=(6,4.2))
-                    norm = TwoSlopeNorm(vmin=-emax, vcenter=0.0, vmax=emax)
+                    norm = TwoSlopeNorm(vmin=-vmax_shared, vcenter=0.0, vmax=vmax_shared)
                     im = ax.imshow((T_pred - T_true).T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()],
                                    aspect='auto', cmap='seismic', norm=norm)
                     plt.colorbar(im, ax=ax).set_label("Error [K] (Pred − True)")
-                    ax.set_title("Error (symmetric)")
+                    ax.set_xlabel("x (strike) [mm]")
+                    ax.set_ylabel("z (depth) [mm]")
+                    ax.set_title("Error (symmetric, shared scale)")
                     st.pyplot(fig)
                 with cD:
                     fig, ax = plt.subplots(figsize=(6,4.2))
                     im = ax.imshow(ci95.T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()],
-                                   aspect='auto', cmap='Reds', vmin=0.0, vmax=u95_max)
+                                   aspect='auto', cmap='Reds', vmin=0.0, vmax=vmax_shared)
                     plt.colorbar(im, ax=ax).set_label("Uncertainty (95% CI) [K]")
-                    ax.set_title("Uncertainty (95% CI)")
+                    ax.set_xlabel("x (strike) [mm]")
+                    ax.set_ylabel("z (depth) [mm]")
+                    ax.set_title("Uncertainty (shared scale)")
                     st.pyplot(fig)
 
                 with st.expander("Validation metrics"):

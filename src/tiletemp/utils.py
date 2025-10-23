@@ -1,11 +1,11 @@
 # src/tiletemp/utils.py
 import numpy as np
 import pandas as pd
-from typing import Dict, List
+from typing import Dict
 
-# Fixed grids v4
+# Fixed grids: 30x10 (x:-50..150, z:0..20)
 NX_FIXED = 30
-NZ_FIXED = 20
+NZ_FIXED = 10
 X_MIN_MM, X_MAX_MM = -50.0, 150.0
 Z_MIN_MM, Z_MAX_MM = 0.0, 20.0
 
@@ -21,7 +21,6 @@ def fixed_grids():
     return x, z
 
 def pack_controls(params: Dict) -> Dict:
-    """Only save true controls (no fixed metadata)."""
     out = {}
     for k in CONTROL_KEYS:
         v = params.get(k)
@@ -32,9 +31,8 @@ def outputs_to_row_2d(T: np.ndarray, prefix="T") -> Dict:
     flat = T.ravel(order="C")
     return {f"{prefix}_{i}": float(flat[i]) for i in range(flat.size)}
 
-# --------- Latin Hypercube Sampler ---------
+# LHS only
 def lhs(n_samples: int, n_dims: int, rng: np.random.Generator) -> np.ndarray:
-    """Centered Latin Hypercube in [0,1]^d."""
     seg = np.linspace(0, 1, n_samples+1)
     pts = (seg[:-1] + seg[1:]) / 2.0
     X = np.zeros((n_samples, n_dims))
@@ -43,10 +41,6 @@ def lhs(n_samples: int, n_dims: int, rng: np.random.Generator) -> np.ndarray:
     return X
 
 def parse_inputs_csv_with_header(file_bytes) -> Dict:
-    """
-    Parse inputs CSV with headers. Returns dict of CONTROL_KEYS -> float for the first row.
-    Missing keys are omitted (caller should fill defaults).
-    """
     df = pd.read_csv(file_bytes)  # header row expected
     row = df.iloc[0]
     out = {}
@@ -56,10 +50,6 @@ def parse_inputs_csv_with_header(file_bytes) -> Dict:
     return out
 
 def read_flat_with_header(file_bytes) -> np.ndarray:
-    """
-    Read a numeric CSV with a header row. Returns flattened numeric values beneath the header.
-    Accepts multiple columns/rows; flattens row-major.
-    """
     df = pd.read_csv(file_bytes)  # header expected
     arr = df.values.ravel()
     return arr
