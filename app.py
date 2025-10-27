@@ -84,7 +84,7 @@ with tab1:
 
     params = dict(P_SOL_MW=P_SOL_MW, neutral_fraction=neutral_fraction, impurity_fraction=impurity_fraction, ne_19=ne_19)
 
-    c1, c2, c3 = st.columns([1,1,2])
+    c1, c2, c3 = st.columns([1,1,1])
     with c1:
         if st.button("➕ Add row"):
             in_row = pack_controls(params)
@@ -95,6 +95,7 @@ with tab1:
         if st.button("🗑️ Clear dataset"):
             st.session_state.inputs_df = pd.DataFrame()
             st.session_state.outputs_df = pd.DataFrame()
+    count_placeholder = c3.empty()
 
     if 'rng' not in st.session_state:
         st.session_state.rng = np.random.default_rng(123)
@@ -136,6 +137,8 @@ with tab1:
         st.session_state.outputs_df = pd.concat([st.session_state.outputs_df, pd.DataFrame(add_outputs)], ignore_index=True)
         st.success(f"Appended {n} samples via Latin Hypercube.")
 
+    count_placeholder.metric("Samples in dataset:", int(len(st.session_state.inputs_df)))
+
     col_dl1, col_dl2 = st.columns(2)
     with col_dl1:
         fname_inputs = st.text_input("Inputs filename", "inputs_train.csv")
@@ -155,6 +158,18 @@ with tab1:
             mime="text/csv",
             disabled=st.session_state.outputs_df.empty,
         )
+
+    with st.expander("Show inputs dataset", expanded=False):
+        if st.session_state.inputs_df.empty:
+            st.info("No input rows have been added yet.")
+        else:
+            st.dataframe(st.session_state.inputs_df)
+
+    with st.expander("Show outputs dataset", expanded=False):
+        if st.session_state.outputs_df.empty:
+            st.info("No output rows have been added yet.")
+        else:
+            st.dataframe(st.session_state.outputs_df)
 
 with tab2:
     st.subheader("Compare model prediction vs. ground truth")
