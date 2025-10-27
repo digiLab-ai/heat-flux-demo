@@ -9,7 +9,7 @@ from src.tiletemp.physics import tile_temperature_field, eich_1d_profile
 from src.tiletemp.utils import (
     fixed_grids, pack_controls, outputs_to_row_2d,
     lhs, NX_FIXED, NZ_FIXED, CONTROL_KEYS,
-    parse_inputs_csv_with_header, read_flat_with_header
+    read_flat_with_header
 )
 
 st.set_page_config(page_title="Divertor Tile Temperature", layout="wide")
@@ -173,50 +173,27 @@ with tab1:
 
 with tab2:
     st.subheader("Compare model prediction vs. ground truth")
-    st.caption("Please upload the validation inputs, emulator prediction, and emulator uncertainty. Expected prediction and uncertainty flattened length = 600 (=30×20).")
-
-    inputs_file = st.file_uploader("Inputs CSV (headers)", type=["csv"], key="inputs_csv")
-    if inputs_file is not None:
-        try:
-            vals = parse_inputs_csv_with_header(inputs_file)
-            defaults = dict(P_SOL_MW=P_SOL_MW, neutral_fraction=neutral_fraction, impurity_fraction=impurity_fraction, ne_19=ne_19)
-            for k,v in defaults.items():
-                if k not in vals:
-                    vals[k] = v
-            P_SOL_MW_c = float(vals["P_SOL_MW"])
-            neutral_fraction_c = float(vals["neutral_fraction"])
-            impurity_fraction_c = float(vals["impurity_fraction"])
-            ne_19_c = float(vals["ne_19"])
-        except Exception as e:
-            st.error(f"Could not parse inputs CSV: {e}")
-            inputs_file = None
-
-    if inputs_file is None:
-        P_SOL_MW_c = P_SOL_MW
-        neutral_fraction_c = neutral_fraction
-        impurity_fraction_c = impurity_fraction
-        ne_19_c = ne_19
-
-    T_true = tile_temperature_field(
-        x, z,
-        P_SOL_MW=P_SOL_MW_c,
-        flux_expansion=FLUX_EXPANSION,
-        angle_deg=ANGLE_DEG,
-        coolant_T_K=COOLANT_T_K,
-        k_W_mK=K_W_MK,
-        thickness_mm=THICKNESS_MM,
-        neutral_fraction=neutral_fraction_c,
-        impurity_fraction=impurity_fraction_c,
-        ne_19=ne_19_c,
-    )
+    st.caption("Please upload the validation outputs, emulator prediction, and emulator uncertainty. Expected flattened length = 600 (=30×20).")
 
     nx, nz = len(x), len(z)
     n_expected = nx * nz
 
+    truth_file = st.file_uploader(f"Validation outputs CSV (flattened, length {n_expected})", type=["csv"], key="truth_csv")
     pred_file = st.file_uploader(f"Prediction CSV (flattened, length {n_expected})", type=["csv"], key="pred_csv")
     unc_file = st.file_uploader("Uncertainty CSV (flattened 1σ, same length)", type=["csv"], key="unc_csv")
 
-    if pred_file is not None and unc_file is not None:
+    T_true = None
+    if truth_file is not None:
+        try:
+            truth_arr = read_flat_with_header(truth_file)
+            if truth_arr.size != n_expected:
+                st.error(f"Validation outputs length {truth_arr.size} does not match expected {n_expected}.")
+            else:
+                T_true = truth_arr.reshape((nx, nz), order="C")
+        except Exception as e:
+            st.error(f"Could not parse validation outputs CSV: {e}")
+
+    if T_true is not None and pred_file is not None and unc_file is not None:
         try:
             pred_arr = read_flat_with_header(pred_file)
             unc_arr = read_flat_with_header(unc_file)
@@ -267,7 +244,7 @@ with tab2:
                     plt.colorbar(im, ax=ax).set_label("Error [K] (Pred − True)")
                     ax.set_xlabel("x (strike) [mm]")
                     ax.set_ylabel("z (depth) [mm]")
-                    ax.set_title("Error (symmetric, shared scale)")
+                    ax.set_title("Error")
                     st.pyplot(fig)
                 with cD:
                     fig, ax = plt.subplots(figsize=(6,4.2))
@@ -275,15 +252,15 @@ with tab2:
                     plt.colorbar(im, ax=ax).set_label("Uncertainty (95% CI) [K]")
                     ax.set_xlabel("x (strike) [mm]")
                     ax.set_ylabel("z (depth) [mm]")
-                    ax.set_title("Uncertainty (shared scale)")
+                    ax.set_title("Uncertainty")
                     st.pyplot(fig)
 
                 with st.expander("Validation metrics"):
                     st.write(f"**RMSE [K]:** {rmse:.3f}   |   **MAE [K]:** {mae:.3f}   |   **R²:** {r2:.3f}   |   **MSLL:** {msll:.3f}")
         except Exception as e:
-            st.error(f"Could not parse uploaded files: {e}")
+            st.error(f"Could not parse prediction or uncertainty CSV: {e}")
     else:
-        st.info("Please upload both a Prediction CSV and an Uncertainty CSV (with headers) to enable comparison.")
+        st.info("Please upload validation outputs, prediction, and uncertainty CSV files (with headers) to enable comparison.")
 
 st.markdown("---")
 st.markdown(f"""
