@@ -266,6 +266,12 @@ with tab2:
                     st.write(
                         f"**RMSE [K]:** {rmse:.3f}   |   **MAE [K]:** {mae:.3f}   |   **R²:** {r2:.3f}   |   **NLPD:** {nlpd:.3f}   |   **MSLL:** {msll:.3f}"
                     )
+                    st.markdown(
+                        "- **RMSE / MAE:** Average magnitude of errors in kelvin; lower values mean predictions hug the truth more closely.\n"
+                        "- **R²:** Fraction of variance explained; numbers near 1.0 indicate strong agreement, while 0 or negative implies the model misses most structure.\n"
+                        "- **NLPD:** Average negative log predictive density; smaller is better because it rewards confident, accurate predictions and penalizes over- or under-confident ones.\n"
+                        "- **MSLL:** Mean standardized log loss relative to a constant baseline; negative scores beat the naive baseline, zero matches it, and positive scores underperform."
+                    )
         except Exception as e:
             st.error(f"Could not parse prediction or uncertainty CSV: {e}")
     else:
