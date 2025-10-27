@@ -3,17 +3,12 @@ import numpy as np
 import pandas as pd
 from typing import Dict
 
-# Fixed grids: 30x10 (x:-50..150, z:0..20)
 NX_FIXED = 30
-NZ_FIXED = 10
+NZ_FIXED = 20
 X_MIN_MM, X_MAX_MM = -50.0, 150.0
 Z_MIN_MM, Z_MAX_MM = 0.0, 20.0
 
-CONTROL_KEYS = [
-    "P_SOL_MW","flux_expansion","angle_deg",
-    "coolant_T_K","k_W_mK","thickness_mm",
-    "neutral_fraction","impurity_fraction","ne_19"
-]
+CONTROL_KEYS = ["P_SOL_MW", "neutral_fraction", "impurity_fraction", "ne_19"]
 
 def fixed_grids():
     x = np.linspace(X_MIN_MM, X_MAX_MM, NX_FIXED)
@@ -31,7 +26,6 @@ def outputs_to_row_2d(T: np.ndarray, prefix="T") -> Dict:
     flat = T.ravel(order="C")
     return {f"{prefix}_{i}": float(flat[i]) for i in range(flat.size)}
 
-# LHS only
 def lhs(n_samples: int, n_dims: int, rng: np.random.Generator) -> np.ndarray:
     seg = np.linspace(0, 1, n_samples+1)
     pts = (seg[:-1] + seg[1:]) / 2.0

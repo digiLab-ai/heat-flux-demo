@@ -1,4 +1,4 @@
-# app.py — 2D Tile Temperature (v6)
+# app.py — 2D Tile Temperature (v7)
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -12,52 +12,48 @@ from src.tiletemp.utils import (
     parse_inputs_csv_with_header, read_flat_with_header
 )
 
-st.set_page_config(page_title="Divertor Tile Temperature — 2D (x–z) — v6", layout="wide")
-st.title("Divertor Tile Temperature — 2D (x–z) — v6")
-st.caption("No index in CSV downloads. LHS auto-generation only (no toggle).")
+st.set_page_config(page_title="Divertor Tile Temperature", layout="wide")
+st.title("Divertor Tile Temperature")
+st.caption("A simulator for predicting divertor target tile temperature.")
 
-# ---- Sidebar controls ----
+# Frozen constants
+THICKNESS_MM = 20.0
+K_W_MK = 120.0
+COOLANT_T_K = 350.0
+ANGLE_DEG = 2.0
+FLUX_EXPANSION = 5.0
+
+# Sidebar: only unfrozen
 with st.sidebar:
     st.header("Control parameters")
-    P_SOL_MW = st.slider("P_SOL to outer target [MW]", 0.5, 30.0, 5.0, 0.5)
-    flux_expansion = st.slider("Flux expansion [-]", 1.0, 15.0, 5.0, 0.5)
-    angle_deg = st.slider("Incidence angle [deg]", 0.5, 5.0, 2.0, 0.1)
-    neutral_fraction = st.slider("Neutral fraction [-]", 0.0, 1.0, 0.0, 0.01)
-    impurity_fraction = st.slider("Impurity fraction (power removed) [-]", 0.0, 0.5, 0.0, 0.01)
+    P_SOL_MW = st.slider("Power to outer SOL [MW]", 0.5, 30.0, 5.0, 0.5)
+    neutral_fraction = st.slider("Neutral fraction", 0.0, 1.0, 0.0, 0.01)
+    impurity_fraction = st.slider("Impurity fraction", 0.0, 0.5, 0.0, 0.01)
     ne_19 = st.slider("Upstream density nₑ [10¹⁹ m⁻³]", 1.0, 15.0, 5.0, 0.5)
 
-    st.header("Tile & cooling")
-    coolant_T_K = st.slider("Coolant temperature T_c [K]", 273.0, 700.0, 350.0, 1.0)
-    k_W_mK = st.slider("Thermal conductivity k [W/m·K]", 30.0, 250.0, 120.0, 1.0)
-    thickness_mm = st.slider("Tile thickness [mm]", 2.0, 60.0, 20.0, 0.5)
-
     st.divider()
-    st.header("Auto-generate dataset (LHS only)")
-    n_points = st.number_input("Number of LHS samples", 1, 100, 20, 1)
+    st.header("Auto-generate dataset (LHS)")
+    n_points = st.number_input("Number of LHS samples", 1, 2000, 20, 1)
     gen_btn = st.button("Generate & Append")
 
-# Fixed grids
 x, z = fixed_grids()
-
-# Tabs
 tab1, tab2 = st.tabs(["Explore & Build", "Compare prediction"])
 
 with tab1:
-    # Compute ground truth with sidebar controls
     T = tile_temperature_field(
         x, z,
         P_SOL_MW=P_SOL_MW,
-        flux_expansion=flux_expansion,
-        angle_deg=angle_deg,
-        coolant_T_K=coolant_T_K,
-        k_W_mK=k_W_mK,
-        thickness_mm=thickness_mm,
+        flux_expansion=FLUX_EXPANSION,
+        angle_deg=ANGLE_DEG,
+        coolant_T_K=COOLANT_T_K,
+        k_W_mK=K_W_MK,
+        thickness_mm=THICKNESS_MM,
         neutral_fraction=neutral_fraction,
         impurity_fraction=impurity_fraction,
         ne_19=ne_19,
     )
     q_MW_m2 = eich_1d_profile(
-        x, P_SOL_MW*(1.0-impurity_fraction), flux_expansion, angle_deg,
+        x, P_SOL_MW*(1.0-impurity_fraction), FLUX_EXPANSION, ANGLE_DEG,
         neutral_fraction=neutral_fraction, ne_19=ne_19
     )
 
@@ -65,8 +61,7 @@ with tab1:
     with col1:
         fig, ax = plt.subplots(figsize=(7.5,5.5))
         im = ax.imshow(T.T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()], aspect='auto', cmap='plasma')
-        cbar = plt.colorbar(im, ax=ax)
-        cbar.set_label("Temperature T(x,z) [K]")
+        plt.colorbar(im, ax=ax).set_label("Temperature T(x,z) [K]")
         ax.set_xlabel("x (strike) [mm]")
         ax.set_ylabel("z (depth) [mm]")
         ax.set_title("2D Tile Temperature (ground truth)")
@@ -80,24 +75,18 @@ with tab1:
         ax2.set_ylabel("q(x) [MW/m²]")
         ax2.grid(True, alpha=0.3)
         st.pyplot(fig2)
-        st.caption(f"Fixed grid: Nx={NX_FIXED}, Nz={NZ_FIXED}. x=[{x.min():.0f},{x.max():.0f}] mm; z=[{z.min():.0f},{z.max():.0f}] mm.")
+        st.caption(f"Grid: Nx={NX_FIXED}, Nz={NZ_FIXED}. x=[{x.min():.0f},{x.max():.0f}] mm; z=[{z.min():.0f},{z.max():.0f}] mm.")
 
-    # Dataset state
     if "inputs_df" not in st.session_state:
         st.session_state.inputs_df = pd.DataFrame()
     if "outputs_df" not in st.session_state:
         st.session_state.outputs_df = pd.DataFrame()
 
-    params = dict(
-        P_SOL_MW=P_SOL_MW, flux_expansion=flux_expansion, angle_deg=angle_deg,
-        coolant_T_K=coolant_T_K, k_W_mK=k_W_mK, thickness_mm=thickness_mm,
-        neutral_fraction=neutral_fraction, impurity_fraction=impurity_fraction, ne_19=ne_19,
-    )
+    params = dict(P_SOL_MW=P_SOL_MW, neutral_fraction=neutral_fraction, impurity_fraction=impurity_fraction, ne_19=ne_19)
 
     c1, c2, c3 = st.columns([1,1,2])
     with c1:
         if st.button("➕ Add row"):
-            from src.tiletemp.utils import pack_controls, outputs_to_row_2d
             in_row = pack_controls(params)
             out_row = outputs_to_row_2d(T, prefix="T")
             st.session_state.inputs_df = pd.concat([st.session_state.inputs_df, pd.DataFrame([in_row])], ignore_index=True)
@@ -107,7 +96,6 @@ with tab1:
             st.session_state.inputs_df = pd.DataFrame()
             st.session_state.outputs_df = pd.DataFrame()
 
-    # LHS auto-generation (always available, no toggle)
     if 'rng' not in st.session_state:
         st.session_state.rng = np.random.default_rng(123)
     if gen_btn:
@@ -115,23 +103,11 @@ with tab1:
         n = int(n_points)
         dims = len(CONTROL_KEYS)
         U = lhs(n, dims, rng)
-
         bounds = dict(
             P_SOL_MW=(0.5, 30.0),
             neutral_fraction=(0.0, 1.0),
             impurity_fraction=(0.0, 0.5),
-            flux_expansion=(1.0, 15.0),
-            angle_deg=(0.5, 5.0),
-            coolant_T_K=(273.0, 700.0),
-            k_W_mK=(30.0, 250.0),
-            thickness_mm=(2.0, 60.0),
             ne_19=(1.0, 15.0),
-            # flux_expansion=(5.0, 5.0),
-            # angle_deg=(2., 2.0),
-            # coolant_T_K=(350.0, 350.0),
-            # k_W_mK=(120.0, 120.0),
-            # thickness_mm=(20.0, 20.0),
-            # ne_19=(1.0, 15.0),
         )
         keys = list(bounds.keys())
         lo = np.array([bounds[k][0] for k in keys])
@@ -141,30 +117,39 @@ with tab1:
         add_inputs, add_outputs = [], []
         for row in samples:
             vals = dict(zip(keys, row))
-            T_i = tile_temperature_field(x, z, **vals)
+            T_i = tile_temperature_field(
+                x, z,
+                P_SOL_MW=vals["P_SOL_MW"],
+                flux_expansion=FLUX_EXPANSION,
+                angle_deg=ANGLE_DEG,
+                coolant_T_K=COOLANT_T_K,
+                k_W_mK=K_W_MK,
+                thickness_mm=THICKNESS_MM,
+                neutral_fraction=vals["neutral_fraction"],
+                impurity_fraction=vals["impurity_fraction"],
+                ne_19=vals["ne_19"],
+            )
             add_inputs.append(pack_controls(vals))
-            from src.tiletemp.utils import outputs_to_row_2d
             add_outputs.append(outputs_to_row_2d(T_i, prefix="T"))
 
         st.session_state.inputs_df = pd.concat([st.session_state.inputs_df, pd.DataFrame(add_inputs)], ignore_index=True)
         st.session_state.outputs_df = pd.concat([st.session_state.outputs_df, pd.DataFrame(add_outputs)], ignore_index=True)
         st.success(f"Appended {n} samples via Latin Hypercube.")
 
-    # Download filename fields (no index in CSV)
     col_dl1, col_dl2 = st.columns(2)
     with col_dl1:
-        fname_inputs = st.text_input("Inputs filename", "inputs.csv")
+        fname_inputs = st.text_input("Inputs filename", "inputs_train.csv")
         st.download_button(
-            "⬇️ Download inputs.csv",
+            "⬇️ Download inputs",
             data=st.session_state.inputs_df.to_csv(index=False).encode("utf-8"),
             file_name=fname_inputs,
             mime="text/csv",
             disabled=st.session_state.inputs_df.empty,
         )
     with col_dl2:
-        fname_outputs = st.text_input("Outputs filename", "outputs.csv")
+        fname_outputs = st.text_input("Outputs filename", "outputs_train.csv")
         st.download_button(
-            "⬇️ Download outputs.csv",
+            "⬇️ Download outputs",
             data=st.session_state.outputs_df.to_csv(index=False).encode("utf-8"),
             file_name=fname_outputs,
             mime="text/csv",
@@ -173,22 +158,17 @@ with tab1:
 
 with tab2:
     st.subheader("Compare model prediction vs. ground truth")
-    st.caption("All CSVs must have a header row. Upload inputs CSV (headers match controls), prediction CSV (flattened), and uncertainty CSV (flattened 1σ).")
+    st.caption("Please upload the validation inputs, emulator prediction, and emulator uncertainty. Expected prediction and uncertainty flattened length = 600 (=30×20).")
 
-    # Inputs CSV
-    inputs_file = st.file_uploader("Inputs CSV (with headers)", type=["csv"], key="inputs_csv_v6")
+    inputs_file = st.file_uploader("Inputs CSV (headers)", type=["csv"], key="inputs_csv")
     if inputs_file is not None:
         try:
             vals = parse_inputs_csv_with_header(inputs_file)
-            for k in CONTROL_KEYS:
+            defaults = dict(P_SOL_MW=P_SOL_MW, neutral_fraction=neutral_fraction, impurity_fraction=impurity_fraction, ne_19=ne_19)
+            for k,v in defaults.items():
                 if k not in vals:
-                    vals[k] = locals().get(k, None)
+                    vals[k] = v
             P_SOL_MW_c = float(vals["P_SOL_MW"])
-            flux_expansion_c = float(vals["flux_expansion"])
-            angle_deg_c = float(vals["angle_deg"])
-            coolant_T_K_c = float(vals["coolant_T_K"])
-            k_W_mK_c = float(vals["k_W_mK"])
-            thickness_mm_c = float(vals["thickness_mm"])
             neutral_fraction_c = float(vals["neutral_fraction"])
             impurity_fraction_c = float(vals["impurity_fraction"])
             ne_19_c = float(vals["ne_19"])
@@ -198,24 +178,18 @@ with tab2:
 
     if inputs_file is None:
         P_SOL_MW_c = P_SOL_MW
-        flux_expansion_c = flux_expansion
-        angle_deg_c = angle_deg
-        coolant_T_K_c = coolant_T_K
-        k_W_mK_c = k_W_mK
-        thickness_mm_c = thickness_mm
         neutral_fraction_c = neutral_fraction
         impurity_fraction_c = impurity_fraction
         ne_19_c = ne_19
 
-    # Ground truth
     T_true = tile_temperature_field(
         x, z,
         P_SOL_MW=P_SOL_MW_c,
-        flux_expansion=flux_expansion_c,
-        angle_deg=angle_deg_c,
-        coolant_T_K=coolant_T_K_c,
-        k_W_mK=k_W_mK_c,
-        thickness_mm=thickness_mm_c,
+        flux_expansion=FLUX_EXPANSION,
+        angle_deg=ANGLE_DEG,
+        coolant_T_K=COOLANT_T_K,
+        k_W_mK=K_W_MK,
+        thickness_mm=THICKNESS_MM,
         neutral_fraction=neutral_fraction_c,
         impurity_fraction=impurity_fraction_c,
         ne_19=ne_19_c,
@@ -224,8 +198,8 @@ with tab2:
     nx, nz = len(x), len(z)
     n_expected = nx * nz
 
-    pred_file = st.file_uploader(f"Prediction CSV (flattened, length {n_expected})", type=["csv"], key="pred_csv_v6")
-    unc_file = st.file_uploader("Uncertainty CSV (flattened 1σ, same length)", type=["csv"], key="unc_csv_v6")
+    pred_file = st.file_uploader(f"Prediction CSV (flattened, length {n_expected})", type=["csv"], key="pred_csv")
+    unc_file = st.file_uploader("Uncertainty CSV (flattened 1σ, same length)", type=["csv"], key="unc_csv")
 
     if pred_file is not None and unc_file is not None:
         try:
@@ -238,7 +212,6 @@ with tab2:
                 T_pred = pred_arr.reshape((nx, nz), order="C")
                 sigma = unc_arr.reshape((nx, nz), order="C")
 
-                # Metrics
                 err = T_pred - T_true
                 rmse = float(np.sqrt(np.mean(err**2)))
                 mae = float(np.mean(np.abs(err)))
@@ -248,20 +221,15 @@ with tab2:
                 var = np.clip(sigma**2, 1e-12, None)
                 msll = float(np.mean(0.5*np.log(2*np.pi*var) + 0.5*((T_true - T_pred)**2)/var))
 
-                # Limits & shared scaling
                 tmin = float(min(T_true.min(), T_pred.min()))
                 tmax = float(max(T_true.max(), T_pred.max()))
                 emax = float(np.max(np.abs(err)))
                 ci95 = 1.96 * sigma
-                u95_max = float(np.max(ci95))
-                vmax_shared = max(emax, u95_max) if np.isfinite(max(emax, u95_max)) else emax
-
-                # 2×2 grid with axis labels
+                vmax_shared = max(emax, float(np.max(ci95)))
                 cA, cB = st.columns(2, gap="large")
                 with cA:
                     fig, ax = plt.subplots(figsize=(6,4.2))
-                    im = ax.imshow(T_true.T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()],
-                                   aspect='auto', cmap='plasma', vmin=tmin, vmax=tmax)
+                    im = ax.imshow(T_true.T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()], aspect='auto', cmap='plasma', vmin=tmin, vmax=tmax)
                     plt.colorbar(im, ax=ax).set_label("T_true [K]")
                     ax.set_xlabel("x (strike) [mm]")
                     ax.set_ylabel("z (depth) [mm]")
@@ -269,8 +237,7 @@ with tab2:
                     st.pyplot(fig)
                 with cB:
                     fig, ax = plt.subplots(figsize=(6,4.2))
-                    im = ax.imshow(T_pred.T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()],
-                                   aspect='auto', cmap='plasma', vmin=tmin, vmax=tmax)
+                    im = ax.imshow(T_pred.T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()], aspect='auto', cmap='plasma', vmin=tmin, vmax=tmax)
                     plt.colorbar(im, ax=ax).set_label("T_pred [K]")
                     ax.set_xlabel("x (strike) [mm]")
                     ax.set_ylabel("z (depth) [mm]")
@@ -281,8 +248,7 @@ with tab2:
                 with cC:
                     fig, ax = plt.subplots(figsize=(6,4.2))
                     norm = TwoSlopeNorm(vmin=-vmax_shared, vcenter=0.0, vmax=vmax_shared)
-                    im = ax.imshow((T_pred - T_true).T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()],
-                                   aspect='auto', cmap='seismic', norm=norm)
+                    im = ax.imshow(err.T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()], aspect='auto', cmap='seismic', norm=norm)
                     plt.colorbar(im, ax=ax).set_label("Error [K] (Pred − True)")
                     ax.set_xlabel("x (strike) [mm]")
                     ax.set_ylabel("z (depth) [mm]")
@@ -290,8 +256,7 @@ with tab2:
                     st.pyplot(fig)
                 with cD:
                     fig, ax = plt.subplots(figsize=(6,4.2))
-                    im = ax.imshow(ci95.T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()],
-                                   aspect='auto', cmap='Reds', vmin=0.0, vmax=vmax_shared)
+                    im = ax.imshow(ci95.T, origin='lower', extent=[x.min(), x.max(), z.min(), z.max()], aspect='auto', cmap='Reds', vmin=0.0, vmax=vmax_shared)
                     plt.colorbar(im, ax=ax).set_label("Uncertainty (95% CI) [K]")
                     ax.set_xlabel("x (strike) [mm]")
                     ax.set_ylabel("z (depth) [mm]")
@@ -304,3 +269,24 @@ with tab2:
             st.error(f"Could not parse uploaded files: {e}")
     else:
         st.info("Please upload both a Prediction CSV and an Uncertainty CSV (with headers) to enable comparison.")
+
+st.markdown("---")
+st.markdown(f"""
+### Parameters & assumptions
+**Free (control) parameters**:
+- Power to outer SOL [MW] - `P_SOL_MW` — power entering the outer scrape off layer (SOL) and travelling to outer target [MW].
+- Neutral fraction - `neutral_fraction` — the fraction of neutral species in the divertor plasma. High fractions will increase spreading of heat flux profile.
+- Impurity fraction - `impurity_fraction` — the fraction of impurity specicies in the divertor plasma. High fractions remove significant power before reaching the target.
+- Upstream density (10¹⁹ m⁻³) - `ne_19` —  the electron density in the scrape off layer at the midplane. High SOL densities will broaden the heat flux profile at the target.
+            
+**Assumed (fixed) parameters**:
+- Tile thickness **t = {20.0} mm**
+- Thermal conductivity **k = {120.0} W/m·K**
+- Coolant temperature **T_c = {350.0} K**
+- Incidence angle **θ = {2.0}°**
+- Flux expansion **f_exp = {5.0}**
+
+**Model**: 
+- Eich 1D footprint (toroidally symmetric), 
+- Steady 1D conduction in depth to a fixed coolant back-face.
+""")
