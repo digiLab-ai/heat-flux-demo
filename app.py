@@ -211,7 +211,14 @@ with tab2:
                 ss_tot = float(np.sum((T_true - np.mean(T_true))**2))
                 r2 = 1.0 - ss_res/ss_tot if ss_tot > 0 else float('nan')
                 var = np.clip(sigma**2, 1e-12, None)
-                msll = float(np.mean(0.5*np.log(2*np.pi*var) + 0.5*((T_true - T_pred)**2)/var))
+                log_loss = 0.5*np.log(2*np.pi*var) + 0.5*((T_true - T_pred)**2)/var
+                nlpd = float(np.mean(log_loss))
+
+                baseline_mean = float(np.mean(T_true))
+                baseline_var = float(np.var(T_true))
+                baseline_var = max(baseline_var, 1e-12)
+                baseline_loss = 0.5*np.log(2*np.pi*baseline_var) + 0.5*((T_true - baseline_mean)**2)/baseline_var
+                msll = float(np.mean(log_loss - baseline_loss))
 
                 tmin = float(min(T_true.min(), T_pred.min()))
                 tmax = float(max(T_true.max(), T_pred.max()))
@@ -256,7 +263,9 @@ with tab2:
                     st.pyplot(fig)
 
                 with st.expander("Validation metrics"):
-                    st.write(f"**RMSE [K]:** {rmse:.3f}   |   **MAE [K]:** {mae:.3f}   |   **R²:** {r2:.3f}   |   **MSLL:** {msll:.3f}")
+                    st.write(
+                        f"**RMSE [K]:** {rmse:.3f}   |   **MAE [K]:** {mae:.3f}   |   **R²:** {r2:.3f}   |   **NLPD:** {nlpd:.3f}   |   **MSLL:** {msll:.3f}"
+                    )
         except Exception as e:
             st.error(f"Could not parse prediction or uncertainty CSV: {e}")
     else:
